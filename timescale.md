@@ -90,7 +90,7 @@ Data içerisinde 1000 gün var ve her 1 günde 1000 adet kayıt var bunların or
 
 Aynı işlemleri MSSQL ile Index kullanarak yaptığımızda ise resimdeki gibi bir sonuç ile karşılaşıyoruz.
 
-![](Aspose.Words.901c9c89-9de4-4fdc-9a93-e671bf38b018.004.png)
+![](img/mssql.png)
 
 Bu durumda MSSQL ile PostreSQL + Timescale arasında yüksek miktarda zaman farkı çıkıyor. PostreSQL çok daha düşük bir zaman aralığında execute ederken MSSQL daha yüksek bir zaman aralığında execute ediyor. 
 
