@@ -137,7 +137,7 @@ ___
 ___
 ![](img/1.png)
 ___
-[SQL Code](https://github.com/kozachad/postresql-timescaledb)
+[SQL Code](https://github.com/kozachad/postresql-timescaledb/blob/main/source.sql)
 
 ## **PostgreSQL’in Güçlendirilmesi için Yapılabilecekler**
 **Donanım Yükseltmeleri:**
