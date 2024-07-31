@@ -137,6 +137,116 @@ ___
 ___
 ![](img/1.png)
 ___
+## **Örnek: Gelen Değeri Anlık Okuyup İşlem Yapma**
+Örnek vermek gerekirse bir cihazdan gelen bir verinin bir değere ulaştıktan sonra sıfırlanıp tekrar başlamasını sağlayacak kod dizini.
+___
+**Hypertable Oluşturma**
+```sql
+CREATE TABLE trend_data (
+    time TIMESTAMPTZ NOT NULL,
+    value DOUBLE PRECISION NOT NULL
+);
+
+SELECT create_hypertable('trend_data','time');
+```
+**Geçici Toplama Tablosu**
+Geçiçi toplamı ve geçerli count'u saklamak için bir tablo daha oluşturuyoruz.
+```sql
+CREATE TABLE temp_aggregate(
+    id SERIAL PRIMARY KEY,
+    current_sum DOUBLE PRECISION DEFAULT 0,
+    current_count INTEGER DEFAULT 0,
+    values JSONB DEFAULT '[]'::jsonb -- Verileri json şeklinde tutacağız gerektiği zaman erişmek için.
+);
+
+INSERT INTO temp_aggregate(current_sum, current_count, values) VALUES (0,0,'[]'::jsonb);
+```
+**Count Verilerini Saklayacak Tablo**
+Her count işlemi tamamlandığında(ex:100 e ulaştığında) bu count'a ait verileri saklamak için bir tablo açıyoruz.
+```sql
+CREATE TABLE count_data (
+    id SERIAL PRIMARY KEY,
+    count_number INTEGER NOT NULL,
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ,
+    values JSONB NOT NULL
+);
+
+SELECT create_hypertable('count_data','start_time');
+```
+**Fonksiyon Oluşturma**
+Gelen veriyi toplayan, belirli bir eşiğe ulaştığında sayacı arttıran ve geçici toplamı(80 değerimiz var 25 geldi 100 ü aştığı için 5 i tutan) sıfırlayan fonksiyon
+```sql
+CREATE OR REPLACE FUNCTION update_count()
+RETURNS TRIGGER AS $$
+DECLARE
+    total_sum DOUBLE PRECISION;
+    current_count INTEGER;
+    new_values JSONB;
+    overflow DOUBLE PRECISION;
+BEGIN
+    -- Geçici toplamı ve geçerli count'u güncelle
+    UPDATE temp_aggregate
+    SET current_sum = current_sum + NEW.value,
+        values = values || jsonb_build_array(ROW(NEW.time, NEW.value)::TEXT::JSONB)
+    WHERE id = 1
+    RETURNING current_sum, current_count, values INTO total_sum, current_count, new_values;
+
+    -- Eğer toplam 100 veya daha büyükse
+    IF total_sum >= 100 THEN
+        -- Fazla değeri hesapla
+        overflow := total_sum - 100;
+
+        -- Geçerli count'u artır ve verileri sakla
+        INSERT INTO count_data (count_number, start_time, end_time, values)
+        VALUES (current_count + 1, (SELECT start_time FROM trend_data ORDER BY time LIMIT 1), NEW.time, new_values);
+
+        -- Geçici toplamı ve count'u güncelle, fazla değeri sonraki toplam için sakla
+        UPDATE temp_aggregate
+        SET current_sum = overflow,
+            current_count = current_count + 1,
+            values = jsonb_build_array(ROW(NEW.time, overflow)::TEXT::JSONB)
+        WHERE id = 1;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+**Trigger Oluşturma**
+Fonksiyonu her yeni veri eklenmeden önce çalıştıracak trigger oluşturalım
+```sql
+CREATE TRIGGER trend_data_trigger
+BEFORE INSERT ON trend_data
+FOR EACH ROW
+EXECUTE FUNCTION update_count();
+```
+**Continuous Aggregate ve Sorgu**
+Continious aggregate oluşturup istediğimiz aggregate verileri sürekli olarak çekebiliriz.
+```sql
+CREATE MATERIALIZED VIEW count_data_aggregates
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 day', start_time) AS bucket,
+    MAX((values->>i)::DOUBLE PRECISION) AS max_value,
+    MIN((values->>i)::DOUBLE PRECISION) AS min_value,
+    count_number
+FROM count_data, generate_series(0, jsonb_array_length(values) - 1) AS i
+GROUP BY bucket, count_number;
+```
+**Sorgu Örneği**
+10.count'un 1.count ile max değer farkını bulmak için.
+```sql
+WITH counts AS (
+    SELECT bucket, count_number, max_value, min_value
+    FROM count_data_aggregates
+)
+SELECT
+    (SELECT max_value FROM counts WHERE count_number = 1) - 
+    (SELECT max_value FROM counts WHERE count_number = 10) AS max_value_difference;
+```
+___
 [SQL Code](https://github.com/kozachad/postresql-timescaledb/blob/main/source.sql)
 
 ## **PostgreSQL’in Güçlendirilmesi için Yapılabilecekler**
